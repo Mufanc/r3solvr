@@ -1,5 +1,69 @@
 mod resolver;
 mod result;
-
 pub use resolver::*;
 pub use result::*;
+use std::fs;
+use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: Box<str>,
+    pub addr: usize,
+    pub section_index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Section {
+    pub name: Box<str>,
+    pub addr: usize,
+    pub file_range: Option<(usize, usize)>,
+}
+
+#[derive(Copy, Clone)]
+pub struct Query<'a> {
+    pub pattern: &'a str,
+    pub prefix: bool,
+    pub debugdata: bool,
+}
+
+impl<'a> Query<'a> {
+    pub fn new(query: &'a str) -> Self {
+        Self {
+            pattern: query,
+            prefix: false,
+            debugdata: false,
+        }
+    }
+
+    pub fn with_prefix(mut self, prefix: bool) -> Self {
+        self.prefix = prefix;
+        self
+    }
+
+    pub fn with_debugdata(mut self, debugdata: bool) -> Self {
+        self.debugdata = debugdata;
+        self
+    }
+
+    fn matches(&self, name: &str) -> bool {
+        if self.prefix {
+            name.starts_with(self.pattern)
+        } else {
+            name == self.pattern
+        }
+    }
+}
+
+pub trait SymbolResolver: Sized {
+    type ResolverImpl;
+
+    fn from_file<P: AsRef<Path>>(file: P) -> ResolverResult<Self::ResolverImpl> {
+        Self::from_data(fs::read(file)?)
+    }
+
+    fn from_data(data: Vec<u8>) -> ResolverResult<Self::ResolverImpl>;
+
+    fn lookup_symbol(&self, query: Query) -> ResolverResult<Symbol>;
+
+    fn lookup_section(&self, index: usize) -> ResolverResult<Section>;
+}
