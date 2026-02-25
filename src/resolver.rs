@@ -6,6 +6,7 @@ use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -24,6 +25,7 @@ pub struct Section {
 pub struct SymbolResolver<'a> {
     data: Box<[u8]>,
     file: MaybeUninit<object::File<'a>>,
+    debugdata_resolver: OnceLock<Option<Pin<Box<SymbolResolver<'static>>>>>,
     _pin: PhantomPinned,
 }
 
@@ -44,6 +46,7 @@ impl SymbolResolver<'_> {
         let mut pinned = Box::pin(Self {
             data: data.into_boxed_slice(),
             file: MaybeUninit::uninit(),
+            debugdata_resolver: OnceLock::new(),
             _pin: PhantomPinned,
         });
 
@@ -90,41 +93,40 @@ impl SymbolResolver<'_> {
             return Err(ResolverError::NotFound(not_found_msg(&config)));
         }
 
-        let result = file
-            .section_by_name(".gnu_debugdata")
-            .and_then(|sec| {
-                // dbg!(sec.file_range());
-                sec.data().ok()
-            })
-            .and_then(|mut data| {
-                let mut decompressed = Vec::new();
-                lzma_rs::xz_decompress(&mut data, &mut decompressed)
-                    .ok()
-                    .map(|_| decompressed)
-            })
-            .and_then(|data| SymbolResolver::from_data(data).ok())
-            .and_then(|resolver| {
-                resolver
-                    .lookup_symbol(LookupConfig::new(config.query).with_prefix(config.prefix))
-                    .into_iter()
-                    .find_map(|sym| {
-                        let Symbol {
+        let debugdata_resolver = self.debugdata_resolver.get_or_init(|| {
+            file.section_by_name(".gnu_debugdata")
+                .and_then(|sec| sec.data().ok())
+                .and_then(|mut data| {
+                    let mut decompressed = Vec::new();
+                    lzma_rs::xz_decompress(&mut data, &mut decompressed)
+                        .ok()
+                        .map(|_| decompressed)
+                })
+                .and_then(|data| SymbolResolver::from_data(data).ok())
+        });
+
+        let result = debugdata_resolver.as_ref().and_then(|resolver| {
+            resolver
+                .lookup_symbol(LookupConfig::new(config.query).with_prefix(config.prefix))
+                .into_iter()
+                .find_map(|sym| {
+                    let Symbol {
+                        name,
+                        addr,
+                        section_index,
+                    } = sym;
+
+                    file.section_by_index(SectionIndex(section_index))
+                        .and_then(|sec| sec.name())
+                        .ok()
+                        .and_then(|name| file.section_by_name(name))
+                        .map(|sec| Symbol {
                             name,
                             addr,
-                            section_index,
-                        } = sym;
-
-                        file.section_by_index(SectionIndex(section_index))
-                            .and_then(|sec| sec.name())
-                            .ok()
-                            .and_then(|name| file.section_by_name(name))
-                            .map(|sec| Symbol {
-                                name,
-                                addr,
-                                section_index: sec.index().0,
-                            })
-                    })
-            });
+                            section_index: sec.index().0,
+                        })
+                })
+        });
 
         result.ok_or_else(|| ResolverError::NotFound(not_found_msg(&config)))
     }
