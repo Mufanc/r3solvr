@@ -51,7 +51,8 @@ impl<'a> SymbolResolver for BasicResolver<'a> {
         Ok(pinned)
     }
 
-    fn lookup_symbol(&self, query: Query) -> ResolverResult<Symbol> {
+    fn lookup_symbol<'q, Q: Into<Query<'q>>>(&self, query: Q) -> ResolverResult<Symbol> {
+        let query = query.into();
         let file = self.file();
 
         let result: Option<_> = file
@@ -144,7 +145,7 @@ impl Drop for BasicResolver<'_> {
 struct CacheKey {
     pattern: Box<str>,
     prefix: bool,
-    debugdata: bool
+    debugdata: bool,
 }
 
 pub struct CachedResolver<'a> {
@@ -162,7 +163,8 @@ impl SymbolResolver for CachedResolver<'_> {
         })
     }
 
-    fn lookup_symbol(&self, query: Query) -> ResolverResult<Symbol> {
+    fn lookup_symbol<'q, Q: Into<Query<'q>>>(&self, query: Q) -> ResolverResult<Symbol> {
+        let query = query.into();
         let key = CacheKey {
             pattern: query.pattern.into(),
             prefix: query.prefix,

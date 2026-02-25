@@ -54,6 +54,16 @@ impl<'a> Query<'a> {
     }
 }
 
+impl<'a> From<&'a str> for Query<'a> {
+    fn from(value: &'a str) -> Self {
+        Self {
+            pattern: value,
+            prefix: false,
+            debugdata: false,
+        }
+    }
+}
+
 pub trait SymbolResolver: Sized {
     type ResolverImpl;
 
@@ -63,7 +73,7 @@ pub trait SymbolResolver: Sized {
 
     fn from_data(data: Vec<u8>) -> ResolverResult<Self::ResolverImpl>;
 
-    fn lookup_symbol(&self, query: Query) -> ResolverResult<Symbol>;
+    fn lookup_symbol<'q, Q: Into<Query<'q>>>(&self, query: Q) -> ResolverResult<Symbol>;
 
     fn lookup_section(&self, index: usize) -> ResolverResult<Section>;
 }
