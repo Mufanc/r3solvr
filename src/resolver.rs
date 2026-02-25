@@ -178,3 +178,11 @@ impl SymbolResolver<'_> {
         unsafe { self.file.assume_init_ref() }
     }
 }
+
+impl Drop for SymbolResolver<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            self.file.assume_init_drop();
+        }
+    }
+}
