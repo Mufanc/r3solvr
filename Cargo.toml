@@ -3,8 +3,17 @@ name = "r3solvr"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "r3solvr"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"], optional = true }
 lzma-rs = "0.3"
 object = { version = "0.38", default-features = false, features = ["read_core", "elf", "unaligned"] }
 thiserror = "2.0"
+
+[features]
+default = []
+cli = ["dep:clap"]
