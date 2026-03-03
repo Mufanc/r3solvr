@@ -2,7 +2,7 @@ mod cli;
 
 use clap::Parser;
 use cli::Cli;
-use r3solvr::{CachedResolver, Query, SymbolResolver};
+use r3solvr::{BasicResolver, Query, SymbolResolver};
 use std::process;
 
 fn main() {
@@ -15,15 +15,24 @@ fn main() {
 }
 
 fn run(cli: Cli) -> r3solvr::ResolverResult<()> {
-    let resolver = CachedResolver::from_file(&cli.file)?;
+    let resolver = BasicResolver::from_file(&cli.file)?;
 
-    let config = Query::new(&cli.query)
-        .with_prefix(cli.prefix)
-        .with_debugdata(cli.debugdata);
+    match &cli.query {
+        Some(query) => {
+            let config = Query::new(query)
+                .with_prefix(cli.prefix)
+                .with_debugdata(cli.debugdata);
 
-    let symbol = resolver.lookup_symbol(config)?;
+            let symbol = resolver.lookup_symbol(config)?;
 
-    println!("{}\t{}\t{}", symbol.addr, symbol.section_index, symbol.name);
+            println!("{}\t{}\t{}", symbol.addr, symbol.section_index, symbol.name);
+        }
+        None => {
+            for symbol in resolver.list_symbols(cli.debugdata) {
+                println!("{}\t{}\t{}", symbol.addr, symbol.section_index, symbol.name);
+            }
+        }
+    }
 
     Ok(())
 }

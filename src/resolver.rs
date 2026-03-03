@@ -5,7 +5,7 @@ use once_map::OnceMap;
 use std::marker::PhantomPinned;
 
 use std::pin::Pin;
-use std::slice;
+use std::{iter, slice};
 use std::sync::OnceLock;
 
 pub type PinnedBasicResolver = Pin<Box<BasicResolver>>;
@@ -31,6 +31,65 @@ impl BasicResolver {
         // `BasicResolver` can only be created through `from_data`, which sets
         // `file` to `Some` before returning `Ok`.
         unsafe { self.file.as_ref().unwrap_unchecked() }
+    }
+
+    fn debugdata_resolver(&self) -> &Option<PinnedBasicResolver> {
+        self.debugdata_resolver.get_or_init(move || {
+            self.file()
+                .section_by_name(".gnu_debugdata")
+                .and_then(|sec| sec.data().ok())
+                .and_then(|mut data| {
+                    let mut decompressed = Vec::new();
+                    lzma_rs::xz_decompress(&mut data, &mut decompressed)
+                        .ok()
+                        .map(|_| decompressed)
+                })
+                .and_then(|data| Self::from_data(data).ok())
+        })
+    }
+
+    pub fn list_symbols(&self, debugdata: bool) -> Box<dyn Iterator<Item = Symbol> + '_> {
+        let file = self.file();
+
+        let main_symbols = file
+            .dynamic_symbols()
+            .chain(file.symbols())
+            .filter_map(|sym| {
+                sym.name().ok().and_then(|name| {
+                    if name.is_empty() {
+                        return None;
+                    }
+                    sym.section_index().map(|index| Symbol {
+                        name: name.into(),
+                        addr: sym.address() as _,
+                        section_index: index.0,
+                    })
+                })
+            });
+
+        let debug_symbols: Box<dyn Iterator<Item = Symbol>> = if debugdata {
+            if let Some(resolver) = self.debugdata_resolver().as_ref() {
+                Box::new(resolver.list_symbols(false).filter_map(move |sym| {
+                    resolver
+                        .file()
+                        .section_by_index(SectionIndex(sym.section_index))
+                        .and_then(|sec| sec.name())
+                        .ok()
+                        .and_then(|name| file.section_by_name(name))
+                        .map(|sec| Symbol {
+                            name: sym.name,
+                            addr: sym.addr,
+                            section_index: sec.index().0,
+                        })
+                }))
+            } else {
+                Box::new(iter::empty())
+            }
+        } else {
+            Box::new(iter::empty())
+        };
+
+        Box::new(main_symbols.chain(debug_symbols))
     }
 }
 
@@ -94,19 +153,7 @@ impl SymbolResolver for BasicResolver {
             return Err(ResolverError::NotFound(not_found_msg(&query)));
         }
 
-        let debugdata_resolver = self.debugdata_resolver.get_or_init(|| {
-            file.section_by_name(".gnu_debugdata")
-                .and_then(|sec| sec.data().ok())
-                .and_then(|mut data| {
-                    let mut decompressed = Vec::new();
-                    lzma_rs::xz_decompress(&mut data, &mut decompressed)
-                        .ok()
-                        .map(|_| decompressed)
-                })
-                .and_then(|data| Self::from_data(data).ok())
-        });
-
-        let result = debugdata_resolver.as_ref().and_then(|resolver| {
+        let result = self.debugdata_resolver().as_ref().and_then(|resolver| {
             resolver
                 .lookup_symbol(query.with_debugdata(false))
                 .into_iter()

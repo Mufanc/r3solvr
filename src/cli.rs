@@ -15,5 +15,5 @@ pub struct Cli {
     pub file: PathBuf,
 
     #[arg(index = 2)]
-    pub query: String,
+    pub query: Option<String>,
 }
