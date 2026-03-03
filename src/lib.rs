@@ -20,14 +20,14 @@ pub struct Section {
 }
 
 #[derive(Copy, Clone)]
-pub struct Query<'a> {
-    pub pattern: &'a str,
+pub struct Query<'q> {
+    pub pattern: &'q str,
     pub prefix: bool,
     pub debugdata: bool,
 }
 
-impl<'a> Query<'a> {
-    pub fn new(query: &'a str) -> Self {
+impl<'q> Query<'q> {
+    pub fn new(query: &'q str) -> Self {
         Self {
             pattern: query,
             prefix: false,

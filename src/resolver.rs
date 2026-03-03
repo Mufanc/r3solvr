@@ -3,16 +3,17 @@ use crate::{Query, Section, Symbol, SymbolResolver};
 use object::{Object, ObjectSection, ObjectSymbol, SectionIndex};
 use once_map::OnceMap;
 use std::marker::PhantomPinned;
-use std::mem::MaybeUninit;
+
 use std::pin::Pin;
+use std::slice;
 use std::sync::OnceLock;
 
-pub type PinnedBasicResolver<'a> = Pin<Box<BasicResolver<'a>>>;
+pub type PinnedBasicResolver = Pin<Box<BasicResolver>>;
 
-pub struct BasicResolver<'a> {
+pub struct BasicResolver {
     data: Box<[u8]>,
-    file: MaybeUninit<object::File<'a>>,
-    debugdata_resolver: OnceLock<Option<PinnedBasicResolver<'a>>>,
+    file: Option<object::File<'static>>,
+    debugdata_resolver: OnceLock<Option<PinnedBasicResolver>>,
     _pin: PhantomPinned,
 }
 
@@ -24,31 +25,45 @@ fn not_found_msg(query: &Query) -> String {
     }
 }
 
-impl BasicResolver<'_> {
+impl BasicResolver {
     fn file(&self) -> &object::File<'_> {
-        unsafe { self.file.assume_init_ref() }
+        // SAFETY: `file` is always `Some` after successful construction.
+        // `BasicResolver` can only be created through `from_data`, which sets
+        // `file` to `Some` before returning `Ok`.
+        unsafe { self.file.as_ref().unwrap_unchecked() }
     }
 }
 
-impl<'a> SymbolResolver for BasicResolver<'a> {
-    type ResolverImpl = PinnedBasicResolver<'a>;
+impl SymbolResolver for BasicResolver {
+    type ResolverImpl = PinnedBasicResolver;
 
     fn from_data(data: Vec<u8>) -> ResolverResult<Self::ResolverImpl> {
-        let mut pinned = Box::pin(BasicResolver {
+        let mut boxed = Box::new(BasicResolver {
             data: data.into_boxed_slice(),
-            file: MaybeUninit::uninit(),
+            file: None,
             debugdata_resolver: OnceLock::new(),
             _pin: PhantomPinned,
         });
 
+        // SAFETY:
+        // 1. `slice::from_raw_parts`: `data_ptr` and `data_len` are derived from
+        //    `boxed.data`, which is valid and owned by `boxed`.
+        // 2. Lifetime extension to `'static`: The actual lifetime is tied to `boxed.data`.
+        //    This is sound because `BasicResolver` is a self-referential struct where:
+        //    - `data` owns the bytes and `file` borrows from it
+        //    - `PhantomPinned` prevents moving the struct
+        //    - Returning `Pin<Box<...>>` ensures the address remains stable
+        // 3. `Pin::new_unchecked`: Safe because `Box` provides heap allocation with
+        //    a stable address, and `PhantomPinned` enforces pinning guarantees.
         unsafe {
-            let ptr = pinned.as_mut().get_unchecked_mut() as *mut BasicResolver;
-            let refr = &mut *ptr;
+            let data_ptr = boxed.data.as_ptr();
+            let data_len = boxed.data.len();
 
-            refr.file.write(object::File::parse(&*refr.data)?);
+            let file = object::File::parse(slice::from_raw_parts(data_ptr, data_len))?;
+            boxed.file = Some(file);
+
+            Ok(Pin::new_unchecked(boxed))
         }
-
-        Ok(pinned)
     }
 
     fn lookup_symbol<'q, Q: Into<Query<'q>>>(&self, query: Q) -> ResolverResult<Symbol> {
@@ -133,14 +148,6 @@ impl<'a> SymbolResolver for BasicResolver<'a> {
     }
 }
 
-impl Drop for BasicResolver<'_> {
-    fn drop(&mut self) {
-        unsafe {
-            self.file.assume_init_drop();
-        }
-    }
-}
-
 #[derive(Eq, PartialEq, Hash)]
 struct CacheKey {
     pattern: Box<str>,
@@ -148,12 +155,12 @@ struct CacheKey {
     debugdata: bool,
 }
 
-pub struct CachedResolver<'a> {
-    resolver: PinnedBasicResolver<'a>,
+pub struct CachedResolver {
+    resolver: PinnedBasicResolver,
     caches: OnceMap<CacheKey, Symbol>,
 }
 
-impl SymbolResolver for CachedResolver<'_> {
+impl SymbolResolver for CachedResolver {
     type ResolverImpl = Self;
 
     fn from_data(data: Vec<u8>) -> ResolverResult<Self> {
