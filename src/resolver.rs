@@ -5,8 +5,8 @@ use once_map::OnceMap;
 use std::marker::PhantomPinned;
 
 use std::pin::Pin;
-use std::{iter, slice};
 use std::sync::OnceLock;
+use std::{iter, slice};
 
 pub type PinnedBasicResolver = Pin<Box<BasicResolver>>;
 
@@ -48,6 +48,27 @@ impl BasicResolver {
         })
     }
 
+    fn parse_debugdata_symbol(&self, enclosing: &object::File, sym: Symbol) -> Option<Symbol> {
+        let file = self.file();
+        let Symbol {
+            name,
+            addr,
+            section_index,
+            ..
+        } = sym;
+
+        file.section_by_index(SectionIndex(section_index))
+            .and_then(|sec| sec.name())
+            .ok()
+            .and_then(|name| enclosing.section_by_name(name))
+            .map(|sec| Symbol {
+                name,
+                addr,
+                section_index: sec.index().0,
+                stripped: true,
+            })
+    }
+
     pub fn list_symbols(&self, debugdata: bool) -> Box<dyn Iterator<Item = Symbol> + '_> {
         let file = self.file();
 
@@ -63,31 +84,21 @@ impl BasicResolver {
                         name: name.into(),
                         addr: sym.address() as _,
                         section_index: index.0,
+                        stripped: false,
                     })
                 })
             });
 
-        let debug_symbols: Box<dyn Iterator<Item = Symbol>> = if debugdata {
-            if let Some(resolver) = self.debugdata_resolver().as_ref() {
-                Box::new(resolver.list_symbols(false).filter_map(move |sym| {
+        let debug_symbols: Box<dyn Iterator<Item = Symbol>> =
+            if debugdata && let Some(resolver) = self.debugdata_resolver().as_ref() {
+                Box::new(
                     resolver
-                        .file()
-                        .section_by_index(SectionIndex(sym.section_index))
-                        .and_then(|sec| sec.name())
-                        .ok()
-                        .and_then(|name| file.section_by_name(name))
-                        .map(|sec| Symbol {
-                            name: sym.name,
-                            addr: sym.addr,
-                            section_index: sec.index().0,
-                        })
-                }))
+                        .list_symbols(false)
+                        .filter_map(|sym| resolver.parse_debugdata_symbol(file, sym)),
+                )
             } else {
                 Box::new(iter::empty())
-            }
-        } else {
-            Box::new(iter::empty())
-        };
+            };
 
         Box::new(main_symbols.chain(debug_symbols))
     }
@@ -141,6 +152,7 @@ impl SymbolResolver for BasicResolver {
                             name: name.into(),
                             addr: sym.address() as _,
                             section_index: index.0,
+                            stripped: false,
                         })
                     })
             });
@@ -157,23 +169,7 @@ impl SymbolResolver for BasicResolver {
             resolver
                 .lookup_symbol(query.with_debugdata(false))
                 .into_iter()
-                .find_map(|sym| {
-                    let Symbol {
-                        name,
-                        addr,
-                        section_index,
-                    } = sym;
-
-                    file.section_by_index(SectionIndex(section_index))
-                        .and_then(|sec| sec.name())
-                        .ok()
-                        .and_then(|name| file.section_by_name(name))
-                        .map(|sec| Symbol {
-                            name,
-                            addr,
-                            section_index: sec.index().0,
-                        })
-                })
+                .find_map(|sym| resolver.parse_debugdata_symbol(file, sym))
         });
 
         result.ok_or_else(|| ResolverError::NotFound(not_found_msg(&query)))
@@ -190,7 +186,9 @@ impl SymbolResolver for BasicResolver {
         Ok(Section {
             name: section.name()?.into(),
             addr: section.address() as _,
-            file_range: section.file_range().map(|(s, e)| (s as _, e as _)),
+            file_range: section
+                .file_range()
+                .map(|(addr, len)| (addr as _, (addr + len) as _)),
         })
     }
 }

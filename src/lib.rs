@@ -10,6 +10,7 @@ pub struct Symbol {
     pub name: Box<str>,
     pub addr: usize,
     pub section_index: usize,
+    pub stripped: bool,
 }
 
 #[derive(Debug, Clone)]

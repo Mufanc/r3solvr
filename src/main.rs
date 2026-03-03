@@ -14,6 +14,10 @@ fn main() {
     }
 }
 
+fn display_stripped(stripped: bool) -> &'static str {
+    if stripped { "S" } else { "V" }
+}
+
 fn run(cli: Cli) -> r3solvr::ResolverResult<()> {
     let resolver = BasicResolver::from_file(&cli.file)?;
 
@@ -25,11 +29,23 @@ fn run(cli: Cli) -> r3solvr::ResolverResult<()> {
 
             let symbol = resolver.lookup_symbol(config)?;
 
-            println!("{}\t{}\t{}", symbol.addr, symbol.section_index, symbol.name);
+            println!(
+                "{:x}\t{}\t{} {}",
+                symbol.addr,
+                symbol.section_index,
+                display_stripped(symbol.stripped),
+                symbol.name
+            );
         }
         None => {
             for symbol in resolver.list_symbols(cli.debugdata) {
-                println!("{}\t{}\t{}", symbol.addr, symbol.section_index, symbol.name);
+                println!(
+                    "{:x}\t{}\t{} {}",
+                    symbol.addr,
+                    symbol.section_index,
+                    display_stripped(symbol.stripped),
+                    symbol.name
+                );
             }
         }
     }
