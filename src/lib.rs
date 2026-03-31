@@ -22,9 +22,9 @@ pub struct Section {
 
 #[derive(Copy, Clone)]
 pub struct Query<'q> {
-    pub pattern: &'q str,
-    pub prefix: bool,
-    pub debugdata: bool,
+    pattern: &'q str,
+    prefix: bool,
+    debugdata: bool,
 }
 
 impl<'q> Query<'q> {
